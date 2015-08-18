@@ -1,0 +1,153 @@
+---
+title: "Practical Machine Learning Project"
+author: "BRohde"
+date: "Sunday, August 16, 2015"
+ 
+---
+##Can Accelerometers Indicate Proper Form During Unilateral Dumbbell Biceps Curl?
+
+##Synopsis
+The goal of this project was to predict the manner in which six participants performed unilateral dumbbell bicep curls while wearing accelerometers (FitBit, Jawbone Up, and Nike FuelBand) by using the Weight Lifting Exercises Dataset provided at http:/groupware.les.inf.puc-rio.br/har from the paper Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.  
+
+The six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+To accomplish this goal the Weight Lifting Exercises Dataset was analysed and processed to eliminate NA's and focus on relevant predictor variables excluding the "classe" variable in the training set.  The model was built using the Random Forest algorithm on the variables that were independent (maximum correlation < 60%).  A simple k-fold cross-validation control was used.  The expected out of sample error was estimated to be 2% or less.  20 test observations were then predicted using the model.
+
+##Data Processing - Loading and Processing the Raw Data
+Download and load the data.  Files were downloaded from the Practical Machine Language Coursera website from the following links:
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+```{r}
+#install.packages("caret")
+#install.packages("knitr")
+#install.packages("corrplot")
+#install.packages("ggplot2")
+#install.packages("randomForest")
+#install.packages("rpart.plot")
+#setwd("~/Data Science")
+getwd()
+#library(knitr)
+#knit2html("PMLProject.RMD")
+```
+```{r}
+training<-read.csv("pml-training.csv", na.strings = c("NA", "#DIV/0!", ""))
+```
+```{r}
+testingkey<-read.csv("pml-testing.csv", na.strings = c("NA", "#DIV/0!", ""))
+dim(training)
+dim(testingkey)
+head(training, n=2)
+```
+Remove variables that have a majority of NA values and are not relevant to this project.
+
+```{r, echo=FALSE}
+remove = c('X', 'user_name', 'raw_timestamp_part_1','raw_timestamp_part_2', 'cvtd_timestamp', 'new_window', 'num_window')
+training<-training[,-which(names(training)%in% remove)]
+dim(training)
+data <- apply(!is.na(training), 2, sum) > 19621
+training <- training [, data]
+```
+
+Verify for near zero variance.
+```{r, echo=FALSE}
+library(caret)
+nzvar<- nearZeroVar(training)
+if(length(nzvar)>0) {
+   training<-training[, -nzvar]
+  }
+dim(training)
+```
+Cross validation is required so the training set needs to be partitioned into a "training set" (75%) and a "test set" (25%). Note, the caret package will need to be installed from CRAN if it is not loaded. (install.packages("caret") in R)
+```{r, echo=FALSE}
+set.seed(789123)
+inTrain<-createDataPartition(y=training$classe, p=0.75, list=FALSE)
+training1<-training[inTrain,]
+testing1<-training[-inTrain,]
+dim(training1)
+dim(testing1)
+```
+To assist in focusing on variables that are key predictors of Bicep Curl form an initial randomForest is run on the training1 dataset with a variable importance plot result.
+
+```{r, echo=TRUE, fig.height=8}
+library(randomForest)
+set.seed(3457)
+RFModel<-randomForest(classe~., data=training1, importance=TRUE, ntree=100)
+varImpPlot(RFModel)
+```
+
+From the Accuracy and Gini graph results above, the top 9 variables are selected for model building.  The 9 variables include: yaw_belt, pitch_belt, roll_belt, magnet_forearm_z, magnet_dumbell_z, magnet_dumbell_y, pitch_forearm, gyros_arm_y, roll_forearm.
+
+Next the 9 covariates are analyzed for correlations.
+
+```{r, echo=FALSE}
+correlation = cor(training1[,c("yaw_belt","roll_belt","pitch_belt", "magnet_forearm_z", "magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm", "gyros_arm_y", "roll_forearm")])
+diag(correlation) <- 0
+which(abs(correlation)>0.75, arr.ind=TRUE)
+```
+There is a correlation over 75% between yaw_belt and roll_belt.  By removing roll_belt and re-running the correlation  script (see below) it is determined the remaining eight variables provide a maximum correlation of 41% which is indicative of independence of the covariates.
+
+```{r, echo=FALSE}
+correlation = cor(training1[,c("yaw_belt","pitch_belt", "magnet_forearm_z", "magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm", "gyros_arm_y", "roll_forearm")])
+diag(correlation) <- 0
+which(abs(correlation)>0.75, arr.ind=TRUE)
+max(correlation)
+```
+Running a tree classifier on the training1 data; roll_belt is listed as the first discriminant among the covariates which indicates that roll_belt should be included in the prediction model and yaw_belt removed.
+```{r, echo=FALSE}
+library(rpart.plot)
+treeModel<-rpart(classe~., data=training1, method="class")
+prp(treeModel)
+```
+Running the correlation script again including roll_belt and excluding yaw_belt produces a maximum correlation of 41% which is still indicative of independent covariates.
+```{r, echo=FALSE}
+correlation = cor(training1[,c("roll_belt","pitch_belt", "magnet_forearm_z", "magnet_dumbbell_z","magnet_dumbbell_y","pitch_forearm", "gyros_arm_y", "roll_forearm")])
+diag(correlation) <- 0
+which(abs(correlation)>0.75, arr.ind=TRUE)
+max(correlation)
+```
+##Prediction Model
+The most significant eight variables are used from the initial Random Forest classification which include: roll_belt, pitch_belt, magnet_forearm_z, magnet_dumbbell_z, magnet_dumbbell_y, pitch_forearm, gyros_arm_y, and roll_forearm. For cross-validation a 2-fold cross-validation control is chosen to maximize run time on this large data set.  The train() function from the caret package is used for this Random Forest algorithm.
+```{r}
+controltwo<-trainControl(method="cv",2)
+RFcModel<-train(classe ~ roll_belt + pitch_belt + magnet_forearm_z + magnet_dumbbell_z + magnet_dumbbell_y + pitch_forearm + gyros_arm_y + roll_forearm, data=training1, method="rf", trControl=controltwo, ntree=250)
+RFcModel
+```
+From the caret package the confusionMatrix()function is applied on the test set (testing1) to determine the model's accuracy.
+
+```{r}
+predictions<- predict(RFcModel, newdata=testing1)
+confusionMat <- confusionMatrix(predictions, testing1$classe)
+confusionMat
+accuracy <- postResample(predictions, testing1$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(testing1$classe, predictions)$overall[1])
+oose
+```
+The accuracy is 98.5% which substantiates using the smaller subset of significant variables.  The Random Forest algorithm's out-of-sample error rate is calculated as follows: 100% - Prediction Accuracy of .985   = 1.40% which is below the assumed out-of-sample error of 2%.  To improve this predictor additional variables could be included such as magnet_dumbbell_y, magnet_belt_y, and magnet_forearm_y.
+
+##Practical Machine Learning Course Submission
+The following 20 observations from the course project submission page are predicted using the Random Forest Algorithm.
+```{r}
+final<-predict(RFcModel, newdata=testingkey)
+final
+```
+Results submitted to Practical Machine Learning course and provided a 20/20 score for the assignment.
+
+```{r}
+answers <- final
+pml_write_files = function (x){
+  n = length (x)
+  for(i in 1:n){
+    filename = paste0("problem_id", i,".txt")
+    write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
+
